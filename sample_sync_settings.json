@@ -1,0 +1,9 @@
+{
+  "sync_type": "Students",
+  "sync_force": false,
+  "sync_delete_missing": false,
+  "sync_filters": {
+    "after_date": null,
+    "grade_level": null
+  }
+}

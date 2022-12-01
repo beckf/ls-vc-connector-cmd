@@ -1,0 +1,17 @@
+{
+  "vcuser": "vc_api_user",
+  "vcpass": "vc_api_pass",
+  "vcurl": "https://api.veracross.com/XXSchoolShortCodeXX/v2/",
+  "account_id": "LSAccountIDNumber",
+  "refresh_token": "LSRefreshToken",
+  "client_secret": "LSDevelClientSecret",
+  "client_id": "LSDevelClientID",
+  "vc_export_catalog_item_fk": "22",
+  "vc_export_school_year": "2022",
+  "vc_export_transaction_type": "1",
+  "vc_export_transaction_source": "2",
+  "import_options_creditamount": "10000",
+  "import_options_lastsync": "Last Sync",
+  "import_options_veracrossid": "VeracrossID",
+  "debug_export": true
+}
