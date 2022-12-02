@@ -315,8 +315,8 @@ def main(argv):
         print('main.py --help')
         sys.exit(2)
     for opt, arg in opts:
-        if opt == '--help':
-            print('/usr/local/bin/python3 main.py --sync --syncjson=/path/to/sync_json.json')
+        if opt in ("-h", "--help"):
+            print('/usr/local/bin/python3 main.py --sync --sync_json=/path/to/sync_json.json')
             sys.exit()
         elif opt in ("-s", "--sync"):
             operation = "sync"

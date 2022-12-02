@@ -3,7 +3,7 @@
   "sync_force": false,
   "sync_delete_missing": false,
   "sync_filters": {
-    "after_date": null,
-    "grade_level": null
+    "after_date": "",
+    "grade_level": ""
   }
 }
