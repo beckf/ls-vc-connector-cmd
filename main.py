@@ -30,7 +30,25 @@ def get_ls_customer_types(lightspeed_connection):
     return ls_customer_types
 
 
-def sync_ls_vc(config, options):
+def get_custom_field_id(lightspeed_connection, name):
+    """
+    Get the Lightspeed id for the customfields
+    :return:
+    """
+    try:
+        custom_fields = lightspeed_connection.get("Customer/CustomField")
+        if isinstance(custom_fields["CustomField"], list):
+            for cf in custom_fields["CustomField"]:
+                # Find internal id for named field
+                if str(cf["name"]) == str(name):
+                    return cf["customFieldID"]
+        else:
+            return None
+    except:
+        return None
+
+
+def sync_ls_vc(config, syncjson):
     c = config
     ls = lightspeed_api.Lightspeed(c)
     vc = veracross_api.Veracross(c)
@@ -44,23 +62,23 @@ def sync_ls_vc(config, options):
     param = {}
 
     # Determine if we are syncing VC changes after particular date and update params set to VC.
-    if "after_date" in options["sync_filters"]:
-        if options["sync_filters"]["after_date"]:
-            param.update({"updated_after": str(options["sync_filters"]["after_date"])})
+    if "after_date" in syncjson["sync_filters"]:
+        if syncjson["sync_filters"]["after_date"]:
+            param.update({"updated_after": str(syncjson["sync_filters"]["after_date"])})
 
     # If we are working with students, add additional parameters.
-    if "sync_type" in options:
-        if options["sync_type"] == "Students":
+    if "sync_type" in syncjson:
+        if syncjson["sync_type"] == "Students":
             print("Getting Veracross Students (Current)")
 
             # Add a grade level filter
-            if "grade_level" in options["sync_filters"]:
-                if options["sync_filters"]["grade_level"]:
-                    if "other" in options["sync_filters"]["grade_level"]:
+            if "grade_level" in syncjson["sync_filters"]:
+                if syncjson["sync_filters"]["grade_level"]:
+                    if "other" in syncjson["sync_filters"]["grade_level"]:
                         # Append non-standard grades to the grade_level param. 20-30
                         param.update({"grade_level": ",".join(str(x) for x in list(range(20, 30)))})
                     else:
-                        param.update({"grade_level": options["sync_filters"]["grade_level"]})
+                        param.update({"grade_level": syncjson["sync_filters"]["grade_level"]})
 
             # Limit to only current students
             param.update({"option": "2"})
@@ -80,14 +98,14 @@ def sync_ls_vc(config, options):
                 sys.exit(2)
 
         # Determine if we want FacultyStaff from VC
-        if options["sync_type"] == "Faculty Staff":
+        if syncjson["sync_type"] == "Faculty Staff":
 
             print("Getting Veracross Faculty Staff (Faculty and Staff)")
             # Limit to roles 1 & 2 in VC Api.
             param.update({"roles": "1,2"})
 
-            # Show parameters to debug log
-            print("VC Parameters: " + str(param), "debug")
+            # Show parameters log
+            print("VC Parameters: " + str(param))
 
             # Get Veracross data for Faculty Staff
             vcdata = vc.pull("facstaff", parameters=param)
@@ -106,6 +124,10 @@ def sync_ls_vc(config, options):
         sys.exit(2)
 
     if vcdata:
+        # Get field IDs
+        vc_custom_id = get_custom_field_id(ls, str(c["import_options_veracrossid"]))
+        lastsync_custom_id = get_custom_field_id(ls, str(c["import_options_lastsync"]))
+
         # Loop through the data from VC.
         for i in vcdata:
 
@@ -154,10 +176,10 @@ def sync_ls_vc(config, options):
                                  },
                                  'CustomFieldValues': {
                                      'CustomFieldValue': [{
-                                         'customFieldID': c["import_options_veracrossid"],
-                                         'value': i["person_pk"]
+                                         'customFieldID': vc_custom_id,
+                                         'value': str(i["person_pk"])
                                      }, {
-                                         'customFieldID': c["import_options_lastsync"],
+                                         'customFieldID': lastsync_custom_id,
                                          'value': str(datetime.datetime.now())
                                      }
                                      ]}
@@ -165,14 +187,14 @@ def sync_ls_vc(config, options):
                             }
 
             # Update data to use correct nick name format from VC.
-            # Added becuase of bug in VC API where sometimes one is returned over other.
+            # Added because of bug in VC API where sometimes one is returned over other.
             if 'nick_first_name' in i:
                 vc_formatted['Customer']['firstName'] = i['nick_first_name']
             elif 'first_nick_name' in i:
                 vc_formatted['Customer']['firstName'] = i['first_nick_name']
 
             # Did we find a record in Lighspeed to sync to?
-            if len(check_current["Customer"]) >= 1:
+            if check_current:
 
                 # Create two dictionaries one for VC and the other for LS
                 # We will see if they match later.
@@ -246,6 +268,7 @@ def sync_ls_vc(config, options):
                     print("Updating customer {} {}.".format(vc_formatted['Customer']['firstName'],
                                                                             vc_formatted['Customer']['lastName']))
                     vc_formatted['Customer']['customerID'] = check_current['Customer']['customerID']
+                    print(vc_formatted["Customer"])
                     ls.update("Customer/" + vc_formatted['Customer']['customerID'], vc_formatted["Customer"])
                 else:
                     print("Record {} {} already up to date.".format(vc_formatted['Customer']['firstName'],
@@ -268,30 +291,57 @@ def sync_ls_vc(config, options):
 
 def main(argv):
     operation = ""
-    options = ""
-    config_file =""
+    sync_json = {
+        "sync_type": "",
+        "sync_force": False,
+        "sync_delete_missing": False,
+        "sync_filters": {
+            "after_date": "",
+            "grade_level": ""
+        }
+    }
 
     try:
-        opts, args = getopt.getopt(argv, "sc:o:h", ["sync", "config=", "options=", "help"])
+        opts, args = getopt.getopt(argv, "hsc:j:t:fda:g:", ["help",
+                                                            "sync",
+                                                            "config=",
+                                                            "sync_json=",
+                                                            "sync_type=",
+                                                            "sync_force",
+                                                            "sync_delete",
+                                                            "filter_after_date=",
+                                                            "filter_grade_level="])
     except getopt.GetoptError:
         print('main.py --help')
         sys.exit(2)
     for opt, arg in opts:
         if opt == '--help':
-            print('/usr/local/bin/python3 main.py --sync --options=/path/to/options_json.json')
+            print('/usr/local/bin/python3 main.py --sync --syncjson=/path/to/sync_json.json')
             sys.exit()
         elif opt in ("-s", "--sync"):
             operation = "sync"
-        elif opt in ("-o", "--options"):
-            options = load_json(arg)
+        elif opt in ("-c", "--config"):
+            config = load_json(arg)
+        elif opt in ("-o", "--sync_json"):
+            sync_json = load_json(arg)
+        elif opt in ("-t", "--sync_type"):
+            sync_json["sync_type"] = arg
+        elif opt in ("-f", "--sync_force"):
+            sync_json["sync_force"] = True
+        elif opt in ("-d", "--sync_delete"):
+            sync_json["sync_delete_missing"] = True
+        elif opt in ("-a", "--filter_after_date"):
+            sync_json["sync_filters"]["after_date"] = arg
+        elif opt in ("-g", "--filter_grade_level"):
+            sync_json["sync_filters"]["grade_level"] = arg
         elif opt in ("-c", "--config"):
             config = load_json(arg)
 
     if operation == "sync":
-        if options and config:
-            sync_ls_vc(config, options)
+        if sync_json and config:
+            sync_ls_vc(config, sync_json)
         else:
-            print("Parameter options or config missing.")
+            print("Parameter sync_json or config missing.")
             sys.exit(2)
 
 
