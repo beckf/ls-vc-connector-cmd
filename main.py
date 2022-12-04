@@ -385,8 +385,9 @@ def main(argv):
             "filter_after_date=",
             "filter_grade_level="])
     except getopt.GetoptError:
-        print('main.py --help')
+        print_help()
         sys.exit(2)
+
     for opt, arg in opts:
         if opt in ("-h", "--help"):
             print_help()
@@ -410,9 +411,6 @@ def main(argv):
             sync_json["sync_filters"]["after_date"] = arg
         elif opt in ("-g", "--filter_grade_level"):
             sync_json["sync_filters"]["grade_level"] = arg
-        else:
-            print_help()
-            sys.exit()
 
     # Sync if there is a config
     if config and operation == "sync":
@@ -427,5 +425,9 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    if len(sys.argv) == 1:
+        print_help()
+        sys.exit(2)
+    else:
+        main(sys.argv[1:])
 
