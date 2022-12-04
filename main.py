@@ -32,6 +32,28 @@ applogs.addHandler(logfile)
 applogs.addHandler(stream)
 
 
+def print_help():
+    print(
+        """
+        main.py:
+        --version = Script version
+        --help = This text
+        --sync = Perform a sync operation          
+        --config = Complete path to config file from LSVCConnector (see sample_config.json)
+        --sync_json = Optional JSON file with sync parameters.
+            Mix of JSON and other switches allowed.
+            Other switches override JSON.
+        --sync_type = VC role to sync ("Students" or "Faculty Staff")
+        --sync_force = Force update all VC records in LS.
+        --sync_delete = Search all LS records and delete all not found in VC.
+        --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
+        --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
+
+        /usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json
+        """
+    )
+
+
 def load_json(file):
     f = open(file)
     r = json.load(f)
@@ -367,24 +389,7 @@ def main(argv):
         sys.exit(2)
     for opt, arg in opts:
         if opt in ("-h", "--help"):
-            print(
-                """
-                main.py:
-                --version = Script version
-                --help = This text
-                --sync = Perform a sync operation          
-                --config = Complete path to config file from LSVCConnector (see sample_config.json)
-                --sync_json = Optional JSON file with sync parameters.
-                    Mix of JSON and other switches allowed.
-                    Other switches override JSON.
-                --sync_type = VC role to sync ("Students" or "Faculty Staff")
-                --sync_force = Force update all VC records in LS.
-                --sync_delete = Search all LS records and delete all not found in VC.
-                --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
-                --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
-                """
-            )
-            print('/usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json')
+            print_help()
             sys.exit()
         elif opt in ("-v", "--version"):
             print(__version__)
@@ -405,6 +410,9 @@ def main(argv):
             sync_json["sync_filters"]["after_date"] = arg
         elif opt in ("-g", "--filter_grade_level"):
             sync_json["sync_filters"]["grade_level"] = arg
+        else:
+            print_help()
+            sys.exit()
 
     # Sync if there is a config
     if config and operation == "sync":
