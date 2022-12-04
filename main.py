@@ -9,6 +9,8 @@ from decimal import Decimal, ROUND_HALF_UP
 import logging
 import json
 
+__version__ = "0.1"
+
 # Creating logger
 applogs = logging.getLogger(__name__)
 applogs.setLevel(logging.DEBUG)
@@ -349,21 +351,43 @@ def main(argv):
     }
 
     try:
-        opts, args = getopt.getopt(argv, "hsc:j:t:fda:g:", ["help",
-                                                            "sync",
-                                                            "config=",
-                                                            "sync_json=",
-                                                            "sync_type=",
-                                                            "sync_force",
-                                                            "sync_delete",
-                                                            "filter_after_date=",
-                                                            "filter_grade_level="])
+        opts, args = getopt.getopt(argv, "vhsc:j:t:fda:g:", [
+            "version",
+            "help",
+            "sync",
+            "config=",
+            "sync_json=",
+            "sync_type=",
+            "sync_force",
+            "sync_delete",
+            "filter_after_date=",
+            "filter_grade_level="])
     except getopt.GetoptError:
         print('main.py --help')
         sys.exit(2)
     for opt, arg in opts:
         if opt in ("-h", "--help"):
+            print(
+                """
+                main.py:
+                --version = Script version
+                --help = This text
+                --sync = Perform a sync operation          
+                --config = Complete path to config file from LSVCConnector (see sample_config.json)
+                --sync_json = Optional JSON file with sync parameters.
+                    Mix of JSON and other switches allowed.
+                    Other switches override JSON.
+                --sync_type = VC role to sync ("Students" or "Faculty Staff")
+                --sync_force = Force update all VC records in LS.
+                --sync_delete = Search all LS records and delete all not found in VC.
+                --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
+                --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
+                """
+            )
             print('/usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json')
+            sys.exit()
+        elif opt in ("-v", "--version"):
+            print(__version__)
             sys.exit()
         elif opt in ("-s", "--sync"):
             operation = "sync"
