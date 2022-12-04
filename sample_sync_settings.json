@@ -5,5 +5,6 @@
   "sync_filters": {
     "after_date": "",
     "grade_level": ""
-  }
+  },
+  "sync_log": ""
 }

@@ -18,6 +18,15 @@ Download the latest release from releases and uncompress.
 You can specify how to sync records using a json file as input, directly using commandline switches, 
 or a mix of both.
 
+JSON Options:
+```angular2html
+sync_type: "Students" or "Faculty Staff"
+sync_force: false or true
+sync_delete_missing: false or true
+after_date: YYYY-MM-DD,
+grade_level: Grade Level ID from Veracross System Homepage in JSON list form -- [1,2,3,4]
+```
+
 Sample JSON Files:
 
 All Students
@@ -29,6 +38,19 @@ All Students
   "sync_filters": {
     "after_date": "",
     "grade_level": ""
+  }
+}
+```
+
+Students Grade 1-4 updated after 2022-12-02
+```
+{
+  "sync_type": "Students",
+  "sync_force": false,
+  "sync_delete_missing": false,
+  "sync_filters": {
+    "after_date": "2022-12-02",
+    "grade_level": [1,2,3,4]
   }
 }
 ```

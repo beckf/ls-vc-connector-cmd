@@ -9,6 +9,26 @@ from decimal import Decimal, ROUND_HALF_UP
 import logging
 import json
 
+# Creating logger
+applogs = logging.getLogger(__name__)
+applogs.setLevel(logging.DEBUG)
+
+# File Log
+file = logging.FileHandler("sync.log")
+fileformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
+file.setLevel(logging.INFO)
+file.setFormatter(fileformat)
+
+# Stream Log
+stream = logging.StreamHandler()
+streamformat = logging.Formatter("%(levelname)s:%(module)s:%(message)s")
+stream.setLevel(logging.DEBUG)
+stream.setFormatter(streamformat)
+
+# Adding all handlers to the logging
+applogs.addHandler(file)
+applogs.addHandler(stream)
+
 
 def load_json(file):
     f = open(file)
@@ -24,7 +44,7 @@ def get_ls_customer_types(lightspeed_connection):
         for i in ct['CustomerType']:
             ls_customer_types[i["name"]] = i["customerTypeID"]
     except:
-        print("Cannot get customer types from Lightspeed API, or none exist.")
+        applogs.info("Cannot get customer types from Lightspeed API, or none exist.")
         sys.exit(2)
 
     return ls_customer_types
@@ -48,43 +68,70 @@ def get_custom_field_id(lightspeed_connection, name):
         return None
 
 
-def sync_ls_vc(config, syncjson):
+def delete_customer(config):
+    """
+    Delete records in Lightspeed.  Filters customers to those that have a companyRegistrationNumber
+    :return:
+    """
+    c = config
+    ls = lightspeed_api.Lightspeed(c)
+    vc = veracross_api.Veracross(c)
+
+    valid_vc_ids = []
+    for i in vc.pull("facstaff", parameters=dict(roles='1,2')):
+        valid_vc_ids.append(i["person_pk"])
+    for i in vc.pull("students", parameters=dict(option="2")):
+        valid_vc_ids.append(i["person_pk"])
+
+    current_customers = ls.get("Customer", dict(load_relations="all"))
+
+    for i in current_customers["Customer"]:
+        if i["companyRegistrationNumber"] != '':
+            if int(i["companyRegistrationNumber"]) not in valid_vc_ids:
+                if float(i["CreditAccount"]["balance"]) <= 0:
+                    applogs.info("Deleting customer {} {}".format(i["firstName"], i["lastName"]))
+                    ls.delete("Customer/" + i["customerID"])
+                else:
+                    applogs.info("Cannot delete customer {}, {} {} with credit balance.".format(i["customerID"],
+                                                                                         i["firstName"],
+                                                                                         i["lastName"]))
+
+
+def sync_ls_vc(config, sync_json):
+
     c = config
     ls = lightspeed_api.Lightspeed(c)
     vc = veracross_api.Veracross(c)
 
     # Make sure we have a lastsync and veracross id field mapped.
     if c["import_options_veracrossid"] is None or c["import_options_lastsync"] is None:
-        print("Missing import_options_veracrossid or import_options_lastsync in config file.")
+        applogs.info("Missing import_options_veracrossid or import_options_lastsync in config file.")
         sys.exit(2)
 
     # Placeholder for parameters
     param = {}
 
     # Determine if we are syncing VC changes after particular date and update params set to VC.
-    if "after_date" in syncjson["sync_filters"]:
-        if syncjson["sync_filters"]["after_date"]:
-            param.update({"updated_after": str(syncjson["sync_filters"]["after_date"])})
+    if "after_date" in sync_json["sync_filters"]:
+        if sync_json["sync_filters"]["after_date"]:
+            param.update({"updated_after": str(sync_json["sync_filters"]["after_date"])})
 
     # If we are working with students, add additional parameters.
-    if "sync_type" in syncjson:
-        if syncjson["sync_type"] == "Students":
-            print("Getting Veracross Students (Current)")
+    if "sync_type" in sync_json:
+        if sync_json["sync_type"] == "Students":
+            applogs.info("Getting Veracross Students (Current)")
 
             # Add a grade level filter
-            if "grade_level" in syncjson["sync_filters"]:
-                if syncjson["sync_filters"]["grade_level"]:
-                    if "other" in syncjson["sync_filters"]["grade_level"]:
-                        # Append non-standard grades to the grade_level param. 20-30
-                        param.update({"grade_level": ",".join(str(x) for x in list(range(20, 30)))})
-                    else:
-                        param.update({"grade_level": syncjson["sync_filters"]["grade_level"]})
+            if "grade_level" in sync_json["sync_filters"]:
+                if isinstance(sync_json["sync_filters"]["grade_level"], list):
+                    grade_list_string = ",".join(str(item) for item in sync_json["sync_filters"]["grade_level"])
+                    param.update({"grade_level": str(grade_list_string)})
 
             # Limit to only current students
             param.update({"option": "2"})
 
             # Show our parameters to console
-            print("VC Parameters: " + str(param))
+            applogs.info("VC Parameters: " + str(param))
 
             # Get Veracross data for students
             vcdata = vc.pull("students", parameters=param)
@@ -94,18 +141,18 @@ def sync_ls_vc(config, syncjson):
                 ls_customer_types = get_ls_customer_types(ls)
                 ls_customerTypeID = ls_customer_types["Student"]
             except:
-                print("Unable to assign customer type from Lightspeed")
+                applogs.info("Unable to assign customer type from Lightspeed")
                 sys.exit(2)
 
         # Determine if we want FacultyStaff from VC
-        if syncjson["sync_type"] == "Faculty Staff":
+        if sync_json["sync_type"] == "Faculty Staff":
 
-            print("Getting Veracross Faculty Staff (Faculty and Staff)")
+            applogs.info("Getting Veracross Faculty Staff (Faculty and Staff)")
             # Limit to roles 1 & 2 in VC Api.
             param.update({"roles": "1,2"})
 
             # Show parameters log
-            print("VC Parameters: " + str(param))
+            applogs.info("VC Parameters: " + str(param))
 
             # Get Veracross data for Faculty Staff
             vcdata = vc.pull("facstaff", parameters=param)
@@ -115,12 +162,12 @@ def sync_ls_vc(config, syncjson):
                 ls_customer_types = get_ls_customer_types(ls)
                 ls_customerTypeID = ls_customer_types["FacultyStaff"]
             except:
-                print("Unable to assign customer type from Lightspeed")
+                applogs.info("Unable to assign customer type from Lightspeed")
                 sys.exit(2)
 
     # User did not select a user type
     else:
-        print("sync_type of 'Faculty Staff' or 'Students' not found in sync options json file.")
+        applogs.info("sync_type of 'Faculty Staff' or 'Students' not found in sync options json file.")
         sys.exit(2)
 
     if vcdata:
@@ -131,7 +178,7 @@ def sync_ls_vc(config, syncjson):
         # Loop through the data from VC.
         for i in vcdata:
 
-            print("Processing VC Record {}".format(i["person_pk"]))
+            applogs.info("Processing VC Record {}".format(i["person_pk"]))
 
             # Get household data for this person
             hh = vc.pull("households/" + str(i["household_fk"]))
@@ -265,26 +312,28 @@ def sync_ls_vc(config, syncjson):
                     force = False
 
                 if not ls_customer == vc_person or force:
-                    print("Updating customer {} {}.".format(vc_formatted['Customer']['firstName'],
-                                                                            vc_formatted['Customer']['lastName']))
+                    applogs.info("Updating customer {} {}.".format(vc_formatted['Customer']['firstName'],
+                                                            vc_formatted['Customer']['lastName']))
                     vc_formatted['Customer']['customerID'] = check_current['Customer']['customerID']
-                    print(vc_formatted["Customer"])
+                    # applogs.info(vc_formatted["Customer"])
                     ls.update("Customer/" + vc_formatted['Customer']['customerID'], vc_formatted["Customer"])
                 else:
-                    print("Record {} {} already up to date.".format(vc_formatted['Customer']['firstName'],
-                                                                                    vc_formatted['Customer']['lastName']))
+                    applogs.info("Record {} {} already up to date.".format(
+                        vc_formatted['Customer']['firstName'],
+                        vc_formatted['Customer']['lastName']))
             else:
                 # Add new user when not found in LS
-                print("Adding new Lightspeed Customer for {} {}".format(
+                applogs.info("Adding new Lightspeed Customer for {} {}".format(
                     vc_formatted['Customer']['firstName'],
                     vc_formatted['Customer']['lastName']))
                 try:
                     new_customer = ls.create("Customer", vc_formatted["Customer"])
-                    print("New Customer # {} Added: {} {}".format(new_customer['Customer']['customerID'],
-                                                                new_customer['Customer']['firstName'],
-                                                                new_customer['Customer']['lastName']))
+                    applogs.info("New Customer # {} Added: {} {}".format(
+                        new_customer['Customer']['customerID'],
+                        new_customer['Customer']['firstName'],
+                        new_customer['Customer']['lastName']))
                 except:
-                    print("Unable to add new Lightspeed Customer for {} {}".format(
+                    applogs.info("Unable to add new Lightspeed Customer for {} {}".format(
                         vc_formatted['Customer']['firstName'],
                         vc_formatted['Customer']['lastName']))
 
@@ -316,13 +365,13 @@ def main(argv):
         sys.exit(2)
     for opt, arg in opts:
         if opt in ("-h", "--help"):
-            print('/usr/local/bin/python3 main.py --sync --sync_json=/path/to/sync_json.json')
+            print('/usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json')
             sys.exit()
         elif opt in ("-s", "--sync"):
             operation = "sync"
         elif opt in ("-c", "--config"):
             config = load_json(arg)
-        elif opt in ("-o", "--sync_json"):
+        elif opt in ("-j", "--sync_json"):
             sync_json = load_json(arg)
         elif opt in ("-t", "--sync_type"):
             sync_json["sync_type"] = arg
@@ -334,15 +383,17 @@ def main(argv):
             sync_json["sync_filters"]["after_date"] = arg
         elif opt in ("-g", "--filter_grade_level"):
             sync_json["sync_filters"]["grade_level"] = arg
-        elif opt in ("-c", "--config"):
-            config = load_json(arg)
 
-    if operation == "sync":
-        if sync_json and config:
-            sync_ls_vc(config, sync_json)
-        else:
-            print("Parameter sync_json or config missing.")
-            sys.exit(2)
+    # Sync if there is a config
+    if config and operation == "sync":
+        sync_ls_vc(config, sync_json)
+    else:
+        applogs.info("Parameter config missing.")
+        sys.exit(2)
+
+    # Delete if requested
+    if config and sync_json["sync_delete_missing"]:
+        delete_customer(config)
 
 
 if __name__ == '__main__':
