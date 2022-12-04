@@ -42,6 +42,7 @@ def print_help():
         --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
         --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
         --sync_log_path = Complete file path to where the logfile should be.
+        
         /usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json
         """
     )

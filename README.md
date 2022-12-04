@@ -15,6 +15,11 @@ On the Settings Tab, click Export Settings.
 
 Download the latest release from releases and uncompress.
 
+Check out the help by running the binary with --help
+```angular2html
+/path/to/lsvcconnector-cmd --help
+```
+
 You can specify how to sync records using a json file as input, directly using commandline switches, 
 or a mix of both.
 
