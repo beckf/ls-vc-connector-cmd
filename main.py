@@ -15,12 +15,6 @@ __version__ = "0.1"
 applogs = logging.getLogger(__name__)
 applogs.setLevel(logging.DEBUG)
 
-# File Log
-logfile = logging.FileHandler("sync.log")
-fileformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
-logfile.setLevel(logging.INFO)
-logfile.setFormatter(fileformat)
-
 # Stream Log
 stream = logging.StreamHandler()
 streamformat = logging.Formatter("%(levelname)s:%(module)s:%(message)s")
@@ -28,7 +22,6 @@ stream.setLevel(logging.DEBUG)
 stream.setFormatter(streamformat)
 
 # Adding all handlers to the logging
-applogs.addHandler(logfile)
 applogs.addHandler(stream)
 
 
@@ -48,7 +41,7 @@ def print_help():
         --sync_delete = Search all LS records and delete all not found in VC.
         --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
         --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
-
+        --sync_log_path = Complete file path to where the logfile should be.
         /usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json
         """
     )
@@ -373,7 +366,7 @@ def main(argv):
     }
 
     try:
-        opts, args = getopt.getopt(argv, "vhsc:j:t:fda:g:", [
+        opts, args = getopt.getopt(argv, "vhsc:j:t:fda:g:l:", [
             "version",
             "help",
             "sync",
@@ -383,7 +376,8 @@ def main(argv):
             "sync_force",
             "sync_delete",
             "filter_after_date=",
-            "filter_grade_level="])
+            "filter_grade_level=",
+            "sync_log_path="])
     except getopt.GetoptError:
         print_help()
         sys.exit(2)
@@ -411,6 +405,18 @@ def main(argv):
             sync_json["sync_filters"]["after_date"] = arg
         elif opt in ("-g", "--filter_grade_level"):
             sync_json["sync_filters"]["grade_level"] = arg
+        elif opt in ("-l", "--sync_log_path"):
+            sync_json["sync_log_path"] = arg
+            try:
+                # File Log
+                logfile = logging.FileHandler(sync_json["sync_log_path"])
+                fileformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
+                logfile.setLevel(logging.INFO)
+                logfile.setFormatter(fileformat)
+                applogs.addHandler(logfile)
+            except:
+                print("Exception occurred while creating log file.")
+                sys.exit(2)
 
     # Sync if there is a config
     if config and operation == "sync":
