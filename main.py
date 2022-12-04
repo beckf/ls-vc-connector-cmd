@@ -14,10 +14,10 @@ applogs = logging.getLogger(__name__)
 applogs.setLevel(logging.DEBUG)
 
 # File Log
-file = logging.FileHandler("sync.log")
+logfile = logging.FileHandler("sync.log")
 fileformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
-file.setLevel(logging.INFO)
-file.setFormatter(fileformat)
+logfile.setLevel(logging.INFO)
+logfile.setFormatter(fileformat)
 
 # Stream Log
 stream = logging.StreamHandler()
@@ -26,7 +26,7 @@ stream.setLevel(logging.DEBUG)
 stream.setFormatter(streamformat)
 
 # Adding all handlers to the logging
-applogs.addHandler(file)
+applogs.addHandler(logfile)
 applogs.addHandler(stream)
 
 
@@ -303,11 +303,9 @@ def sync_ls_vc(config, sync_json):
                     ls_customer["state"] = ''
 
                 # Compare the data. Are the two dictionaries the same...
-                if "sync_force" in c:
-                    if c["sync_force"]:
-                        force = True
-                    else:
-                        force = False
+                if sync_json["sync_force"]:
+                    force = True
+                    applogs.info("Force sync enabled.")
                 else:
                     force = False
 
