@@ -1,0 +1,16 @@
+altgraph==0.17.3
+certifi==2022.9.24
+charset-normalizer==2.1.1
+idna==3.4
+lightspeed-api==0.5
+macholib==1.16.2
+numpy==1.23.5
+pandas==1.5.2
+pyinstaller==5.6.2
+pyinstaller-hooks-contrib==2022.13
+python-dateutil==2.8.2
+pytz==2022.6
+requests==2.28.1
+six==1.16.0
+urllib3==1.26.13
+veracross-api==1.0
