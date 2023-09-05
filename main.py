@@ -5,11 +5,14 @@ import getopt
 import os
 import datetime
 import pandas
+import csv
 from decimal import Decimal, ROUND_HALF_UP
 import logging
 import json
+import pytz
+import datetime
 
-__version__ = "0.1"
+__version__ = "0.2"
 
 # Creating logger
 applogs = logging.getLogger(__name__)
@@ -31,19 +34,19 @@ def print_help():
         main.py:
         --version = Script version
         --help = This text
-        --sync = Perform a sync operation          
+        --operation = "sync" to performa sync with LS. "export" to export data from LS.       
         --config = Complete path to config file from LSVCConnector (see sample_config.json)
-        --sync_json = Optional JSON file with sync parameters.
+        --operation_json = Optional JSON file with sync parameters.
             Mix of JSON and other switches allowed.
             Other switches override JSON.
-        --sync_type = VC role to sync ("Students" or "Faculty Staff")
+        --type = VC role to sync ("Students" or "Faculty Staff")
         --sync_force = Force update all VC records in LS.
         --sync_delete = Search all LS records and delete all not found in VC.
         --filter_after_date = Only update records updated in VC after date formatted as YYYY-MM-DD
         --filter_grade_level = Comma seperated list of grades by VC ID to sync ("1,2,3,4,20")
-        --sync_log_path = Complete file path to where the logfile should be.
+        --log_path = Complete file pathf to where the logfile should be.
         
-        /usr/local/bin/python3 main.py --sync --config=config.json --sync_json=/path/to/sync_json.json
+        /usr/local/bin/python3 main.py --operation=sync --config=config.json --operation_json=/path/to/operation_json.json
         """
     )
 
@@ -115,7 +118,7 @@ def delete_customer(config):
                                                                                          i["lastName"]))
 
 
-def sync_ls_vc(config, sync_json):
+def sync_ls_vc(config, operation_json):
 
     c = config
     ls = lightspeed_api.Lightspeed(c)
@@ -130,19 +133,19 @@ def sync_ls_vc(config, sync_json):
     param = {}
 
     # Determine if we are syncing VC changes after particular date and update params set to VC.
-    if "after_date" in sync_json["sync_filters"]:
-        if sync_json["sync_filters"]["after_date"]:
-            param.update({"updated_after": str(sync_json["sync_filters"]["after_date"])})
+    if "after_date" in operation_json["sync_filters"]:
+        if operation_json["sync_filters"]["after_date"]:
+            param.update({"updated_after": str(operation_json["sync_filters"]["after_date"])})
 
     # If we are working with students, add additional parameters.
-    if "sync_type" in sync_json:
-        if sync_json["sync_type"] == "Students":
+    if "type" in operation_json:
+        if operation_json["type"] == "Students":
             applogs.info("Getting Veracross Students (Current)")
 
             # Add a grade level filter
-            if "grade_level" in sync_json["sync_filters"]:
-                if isinstance(sync_json["sync_filters"]["grade_level"], list):
-                    grade_list_string = ",".join(str(item) for item in sync_json["sync_filters"]["grade_level"])
+            if "grade_level" in operation_json["sync_filters"]:
+                if isinstance(operation_json["sync_filters"]["grade_level"], list):
+                    grade_list_string = ",".join(str(item) for item in operation_json["sync_filters"]["grade_level"])
                     param.update({"grade_level": str(grade_list_string)})
 
             # Limit to only current students
@@ -163,7 +166,7 @@ def sync_ls_vc(config, sync_json):
                 sys.exit(2)
 
         # Determine if we want FacultyStaff from VC
-        if sync_json["sync_type"] == "Faculty Staff":
+        if operation_json["type"] == "Faculty Staff":
 
             applogs.info("Getting Veracross Faculty Staff (Faculty and Staff)")
             # Limit to roles 1 & 2 in VC Api.
@@ -185,7 +188,7 @@ def sync_ls_vc(config, sync_json):
 
     # User did not select a user type
     else:
-        applogs.info("sync_type of 'Faculty Staff' or 'Students' not found in sync options json file.")
+        applogs.info("type of 'Faculty Staff' or 'Students' not found in sync options json file.")
         sys.exit(2)
 
     if vcdata:
@@ -321,7 +324,7 @@ def sync_ls_vc(config, sync_json):
                     ls_customer["state"] = ''
 
                 # Compare the data. Are the two dictionaries the same...
-                if sync_json["sync_force"]:
+                if operation_json["sync_force"]:
                     force = True
                     applogs.info("Force sync enabled.")
                 else:
@@ -354,10 +357,447 @@ def sync_ls_vc(config, sync_json):
                         vc_formatted['Customer']['lastName']))
 
 
+def get_payment_types(lightspeed_connection):
+    ls_payment_types = dict()
+
+    try:
+        pt = lightspeed_connection.get("PaymentType")
+        for i in pt['PaymentType']:
+            ls_payment_types[i["name"]] = i["paymentTypeID"]
+        return ls_payment_types
+    except:
+        applogs.info("Cannot get payment types from API.")
+
+
+def get_shops(lightspeed_connection):
+    ls_shops = dict()
+    try:
+        shop = lightspeed_connection.get("Shop")
+        if isinstance(shop['Shop'], list):
+            for s in shop['Shop']:
+                ls_shops[s["name"]] = s
+        else:
+            ls_shops[shop["Shop"]["name"]] = shop['Shop']
+        return ls_shops
+
+    except:
+        applogs.info("Error getting shop names.")
+        sys.exit(2)
+
+
+def roundup_decimal(x):
+    """
+    Self-Explanatory
+    :param x: rounded up decimal to two places.
+    :return:
+    """
+    return x.quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
+
+
+def get_employees(lightspeed_connection):
+    employees = dict()
+    try:
+        emp = lightspeed_connection.get("Employee")
+        if isinstance(emp['Employee'], list):
+            for s in emp['Employee']:
+                name = s["firstName"] + " " + s["lastName"]
+                employees[name] = s["employeeID"]
+        else:
+            name = emp["Shop"]["firstName"] + " " + emp["Shop"]["lastName"]
+            employees[name] = emp["Shop"]["employeeID"]
+
+        return employees
+    except:
+        applogs.info("Error getting employees from LS.")
+        sys.exit(2)
+
+
+def clear_account_balances(lightspeed_connection, customerID, balance, paymentID, creditAccountID, emp_id):
+    try:
+        formatted_request = {
+                            "employeeID": emp_id,
+                            "registerID": 1,
+                            "shopID": 1,
+                            "customerID": customerID,
+                            "completed": 'true',
+                            "SaleLines": {
+                                "SaleLine": {
+                                    "itemID": 0,
+                                    "note": "Balance Cleared by LSVCConnector",
+                                    "unitQuantity": 1,
+                                    "unitPrice": -float(balance),
+                                    "taxClassID": 0,
+                                    "avgCost": 0,
+                                    "fifoCost": 0
+                                }
+                            },
+                            "SalePayments": {
+                                "SalePayment": {
+                                    "amount": -float(balance),
+                                    "paymentTypeID": paymentID,
+                                    "creditAccountID": creditAccountID
+                                }
+                            }
+                        }
+    except:
+        applogs.info("Unable to format data to clear balances. Data missing?")
+
+    try:
+        lightspeed_connection.create('Sale', data=formatted_request)
+        applogs.info("Cleared balance of {} of customerID {}".format(str(balance), str(customerID)))
+    except:
+        applogs.info("Unable to clear balance for customerID {}. Request follows.".format(str(customerID)))
+        applogs.info(formatted_request)
+
+
+def export_charge_balance(config, operation_json):
+    """
+    Export Charges from LS in CSV
+    :return:
+    """
+    c = config
+    ls = lightspeed_api.Lightspeed(c)
+
+    current_store = operation_json["export_shop"]
+    ls_shops = get_shops(ls)
+
+    # Set current Timezone
+    shop_timezone_name = ls_shops[current_store]["timeZone"]
+    timezone = pytz.timezone(shop_timezone_name)
+    shop_timezone_utc_offset = datetime.datetime.now(timezone).strftime('%z')
+    shop_timezone_utc_offset_iso = shop_timezone_utc_offset[:3] + ":" + shop_timezone_utc_offset[3:]
+    applogs.info(
+        "Found %s timezone for shop named %s." % (shop_timezone_name, ls_shops[current_store]["name"]))
+
+    # Customer Type
+    ct = operation_json["type"]
+    try:
+        ls_customer_types = get_ls_customer_types(ls)
+        ls_customerTypeID = ls_customer_types[ct]
+    except:
+        applogs.info("Unable to assign customer type from Lightspeed")
+        sys.exit(2)
+
+    applogs.info("Filtering results to customerType %s, id %s" % (ct, ls_customerTypeID))
+
+    # Get selected shop
+    shop = operation_json["export_shop"]
+    shop_id = ls_shops[shop]['shopID']
+    applogs.info("Filtering results to shop %s, id %s" % (shop, shop_id))
+
+    # Are we clearing charges?
+    try:
+        if operation_json["export_clear_charges"]:
+            pt = operation_json["export_clear_payment_type"]
+            ls_payment_types = get_payment_types(ls)
+            pt_id = ls_payment_types[pt]
+    except:
+        applogs.info("Not clearing charges. Missing export_clear_charges or export_clear_payment_type from json.")
+
+    # Ensure there is an export location
+    try:
+        if os.path.isdir(operation_json["export_path"]):
+            applogs.info("Exporting to %s" % (operation_json["export_path"]))
+    except:
+        applogs.info("Missing export_path in json.")
+
+    # !! Sale Line Export !!
+
+    # Export SaleLine Data
+    try:
+        begin_date = operation_json["export_date_begin"]
+        # begin_date = begin_date.toPyDate()
+    except:
+        applogs.info("Missing export_date_begin in json.")
+
+    # get begin and end dates
+    try:
+        end_date = operation_json["export_date_end"]
+        # end_date = end_date.toPyDate()
+    except:
+        applogs.info("Missing export_date_end in json.")
+
+    # Check date format.
+    if len(str(begin_date)) != 10 or len(str(end_date)) != 10:
+        applogs.info("Invalid begin or end date. Must be in format YYYY-MM-DD.")
+        sys.exit(2)
+
+    try:
+        parameters = {}
+        parameters['load_relations'] = 'all'
+        parameters['completed'] = 'true'
+        parameters['timeStamp'] = '{},{}T00:00:00-04:00,{}T23:59:59{}'.format("><",
+                                                                              begin_date,
+                                                                              end_date,
+                                                                              shop_timezone_utc_offset_iso)
+        applogs.info("Querying Lightspeed \"Sales\" data point with parameters " + str(parameters))
+        salelines = ls.get("Sale", parameters=parameters)
+    except:
+        salelines = None
+        applogs.info("Unable to get SaleLine data.")
+        sys.exit(2)
+
+    saleline_export_data = []
+
+    # throw down some headers.
+    f = ['person_id',
+         'customer_account_number',
+         'customer_name',
+         'transaction_source',
+         'transaction_type',
+         'school_year',
+         'item_date',
+         'catalog_item_fk',
+         'description',
+         'quantity',
+         'unit_price',
+         'purchase_amount',
+         'tax_amount',
+         'total_amount',
+         'pos_transaction_id'
+         ]
+
+    saleline_export_data.append(f)
+
+    for i in salelines['Sale']:
+
+        # Does this invoice have a payment that is on account.
+        on_account = False
+
+        if 'SalePayments' in i:
+            if isinstance(i['SalePayments']['SalePayment'], list):
+                for p in i['SalePayments']['SalePayment']:
+                    if p['PaymentType']['code'] == 'SCA':
+                        on_account = True
+            else:
+                if i['SalePayments']['SalePayment']['PaymentType']['code'] == 'SCA':
+                    on_account = True
+
+        if 'SaleLines' in i and on_account is True:
+
+            # Check this is a customer we requested.
+            if i['Customer']['customerTypeID'] != ls_customerTypeID:
+                continue
+
+            # Verify there are not mixed payments with on credit account
+            if isinstance(i['SalePayments']['SalePayment'], list):
+                for p in i['SalePayments']['SalePayment']:
+                    if p['PaymentType']['code'] == 'SCA':
+                        # Skip sales that mix payments with on_account
+                        applogs.info("Skipping Sale #%s (%s %s): Other payments mixed with On Account." %
+                                              (str(i['saleID']),
+                                               str(i['Customer']['firstName']),
+                                               str(i['Customer']['lastName'])))
+                        continue
+
+            # Depending on how many items sold,
+            # types of salelines are returned.
+            # List of dictionaries and a single dictionary.
+            # Is this multiline sale?
+            if isinstance(i['SaleLines']['SaleLine'], list):
+
+                for s in i['SaleLines']['SaleLine']:
+
+                    # Ignore this entry if it was not in the shop selected.
+                    try:
+                        if s['shopID'] != shop_id:
+                            # applogs.info("ShopID for entry is not the shop that was requested, "
+                            #                      "skipping entry: %s" % str(s))
+                            continue
+                    except:
+                        applogs.info("Unable to determine shopID for entry: %s." % s)
+                        continue
+
+                    # Determine correct item description to use:
+                    try:
+                        if 'Item' in s:
+                            if 'description' in s['Item']:
+                                description = str(s['Item']['description'])
+                            else:
+                                description = "Unknown"
+                        elif 'Note' in s:
+                            if 'note' in s['Note']:
+                                description = str(s['Note']['note'])
+                                applogs.info("Debug Output: Sale line without actual item: " +
+                                                      str(description))
+                        else:
+                            description = "Unknown"
+                    except:
+                        description = "Unknown"
+
+                    # Format the entry to be added to our export file.
+                    try:
+
+                        saleline_single = [str(i['Customer']['companyRegistrationNumber']),
+                                           str(i['Customer']['companyRegistrationNumber']),
+                                           str(i['Customer']['firstName'] + " " + i['Customer']['lastName']),
+                                           operation_json["export_options_transaction_source"],
+                                           operation_json["export_options_transaction_type"],
+                                           operation_json["export_options_school_year"],
+                                           str(i['timeStamp'][:10]),
+                                           operation_json["export_options_catalog_item"],
+                                           str(description),
+                                           str(s['unitQuantity']),
+                                           Decimal(s['unitPrice']) -
+                                           (Decimal(s['calcLineDiscount']) / int(s['unitQuantity'])),
+                                           Decimal(s['displayableSubtotal']),
+                                           roundup_decimal(Decimal(s['calcTax1'])),
+                                           roundup_decimal(Decimal(s['calcTotal'])),
+                                           str(i['saleID'])
+                                           ]
+
+                        saleline_export_data.append(saleline_single)
+                    except:
+                        applogs.info("Unable to append item (multisale) %s for Sale %s data to CSV." %
+                                              (str(s['saleLineID']), str(i['saleID'])))
+                        applogs.info("Debug Output: " + str(s))
+            else:
+                try:
+                    # Is this a singleline sale?
+                    if 'Item' in i["SaleLines"]["SaleLine"]:
+                        # Need to be able to identify the item by it's type and not if it has items.
+                        # What if only single misc charge?  To do this the way we clear balances needs to be change.
+                        # Ideally we would want a Payment to CC Account.
+                        # if isinstance(i["SaleLines"]["SaleLine"], dict):
+                        # Ignore this entry if it was not in the shop selected.
+                        if i["SaleLines"]["SaleLine"]["shopID"] != shop_id:
+                            #applogs.info("ShopID for entry is not the shop that was requested, "
+                            #                      "skipping entry: %s" % str(i["SaleLines"]["SaleLine"]))
+                            continue
+
+                        # Determine a description
+                        try:
+                            if 'Item' in i["SaleLines"]["SaleLine"]:
+                                if 'description' in i["SaleLines"]["SaleLine"]['Item']:
+                                    description = str(i["SaleLines"]["SaleLine"]['Item']['description'])
+                                else:
+                                    description = "Unknown"
+                            elif 'Note' in i["SaleLines"]["SaleLine"]:
+                                if 'note' in i["SaleLines"]["SaleLine"]['Note']:
+                                    description = str(i["SaleLines"]["SaleLine"]['Note']['note'])
+                                    applogs.info("Debug Output: Sale line without actual item: " +
+                                                          str(description))
+                            else:
+                                description = "Unknown"
+                        except:
+                            description = "Unknown"
+
+                        # Format the entry to be added to our export file.
+                        saleline_single = [str(i['Customer']['companyRegistrationNumber']),
+                                           str(i['Customer']['companyRegistrationNumber']),
+                                           str(i['Customer']['firstName'] + " " + i['Customer']['lastName']),
+                                           operation_json["export_options_transaction_source"],
+                                           operation_json["export_options_transaction_type"],
+                                           operation_json["export_options_school_year"],
+                                           str(i["SaleLines"]["SaleLine"]['timeStamp'][:10]),
+                                           operation_json["export_options_catalog_item"],
+                                           str(description),
+                                           str(i["SaleLines"]["SaleLine"]['unitQuantity']),
+                                           Decimal(i["SaleLines"]["SaleLine"]['unitPrice']) -
+                                           (Decimal(i["SaleLines"]["SaleLine"]['calcLineDiscount']) /
+                                            int(i["SaleLines"]["SaleLine"]['unitQuantity'])),
+                                           Decimal(i["SaleLines"]["SaleLine"]['displayableSubtotal']),
+                                           roundup_decimal(
+                                               Decimal(i["SaleLines"]["SaleLine"]['calcTax1'])),
+                                           roundup_decimal(
+                                               Decimal(i["SaleLines"]["SaleLine"]['calcTotal'])),
+                                           str(i['saleID'])
+                                           ]
+
+                        saleline_export_data.append(saleline_single)
+                except:
+                    applogs.info("Unable to append (single) saleline for sale # " + str(i['saleID']),
+                                          "info")
+                    applogs.info("Debug Output: " + str(i["SaleLines"]["SaleLine"]))
+
+    try:
+        filename = operation_json["export_path"]
+        filename = (filename + '/lightspeed_salelines_export_' +
+                    datetime.datetime.now().strftime('%m%d%Y-%H%m%S') + '.csv')
+        applogs.info(str(filename))
+    except:
+        applogs.info("Unable to determine export file.")
+        sys.exit(2)
+
+    try:
+        with open(filename, 'w') as f:
+            write = csv.writer(f)
+            write.writerows(saleline_export_data)
+    except:
+        applogs.info("Unable to export salelines file.")
+        sys.exit(2)
+
+    # !! Account Balance Export !!
+    try:
+        # Get Customers with Balance on account. Used to export balances and clear accounts.
+        customers = ls.get("Customer", parameters=dict(load_relations='["CreditAccount"]'))
+    except:
+        applogs.info("Unable to get Customer CreditAccount from Lightspeed.")
+        sys.exit(2)
+
+    try:
+        export_data = []
+
+        f = ['first_name',
+             'last_name',
+             'veracross_id',
+             'lightspeed_cust_type',
+             'balance',
+             'lightspeed_cust_num']
+
+        export_data.append(f)
+
+        # If we are clearing - who is it marked as?
+        try:
+            emp = get_employees(ls)
+            emp_id = emp[operation_json["export_clear_charges_employee_name"]]
+
+        except:
+            applogs.info("Couldn't determine charge clearing employee name. Using ID 1.")
+            emp_id = 1
+
+        for i in customers['Customer']:
+            if 'CreditAccount' in i:
+                if (float(i['CreditAccount']['balance']) > 0) and (int(i['customerTypeID']) == int(ls_customerTypeID)):
+                    a = [i['firstName'],
+                         i['lastName'],
+                         i['companyRegistrationNumber'],
+                         i['customerTypeID'],
+                         i['CreditAccount']['balance'],
+                         i['customerID']]
+                    export_data.append(a)
+
+                    if operation_json["export_clear_charges"]:
+
+                        # Clear the balance for this account
+                        clear_account_balances(int(i['customerID']),
+                                               float(i['CreditAccount']['balance']),
+                                               int(pt_id),
+                                               int(i["creditAccountID"]),
+                                               int(emp_id))
+
+    except:
+        applogs.info("Failed to format CreditBalance Export data.")
+        sys.exit(2)
+
+    try:
+        filename = operation_json["export_path"]
+        filename = filename + '/lightspeed_balance_export_' + \
+                   datetime.datetime.now().strftime('%m%d%Y-%H%m%S') + '.xlsx'
+
+        with open(filename, 'w') as f:
+            write = csv.writer(f)
+            write.writerows(export_data)
+
+    except:
+        applogs.info("Failed to export csv balance data.")
+        sys.exit(2)
+
+
 def main(argv):
     operation = ""
-    sync_json = {
-        "sync_type": "",
+    operation_json = {
+        "type": "",
         "sync_force": False,
         "sync_delete_missing": False,
         "sync_filters": {
@@ -367,18 +807,18 @@ def main(argv):
     }
 
     try:
-        opts, args = getopt.getopt(argv, "vhsc:j:t:fda:g:l:", [
+        opts, args = getopt.getopt(argv, "vhoc:j:t:fda:g:l:", [
             "version",
             "help",
-            "sync",
+            "operation=",
             "config=",
-            "sync_json=",
-            "sync_type=",
+            "operation_json=",
+            "type=",
             "sync_force",
             "sync_delete",
             "filter_after_date=",
             "filter_grade_level=",
-            "sync_log_path="])
+            "log_path="])
     except getopt.GetoptError:
         print_help()
         sys.exit(2)
@@ -390,27 +830,33 @@ def main(argv):
         elif opt in ("-v", "--version"):
             print(__version__)
             sys.exit()
-        elif opt in ("-s", "--sync"):
-            operation = "sync"
+        elif opt in ("-o", "--operation"):
+            if arg == "sync":
+                operation = "sync"
+            elif arg == "export":
+                operation = "export"
+            else:
+                print("Unknown operation. Use sync or export.")
+                sys.exit()
         elif opt in ("-c", "--config"):
             config = load_json(arg)
-        elif opt in ("-j", "--sync_json"):
-            sync_json = load_json(arg)
-        elif opt in ("-t", "--sync_type"):
-            sync_json["sync_type"] = arg
+        elif opt in ("-j", "--operation_json"):
+            operation_json = load_json(arg)
+        elif opt in ("-t", "--type"):
+            operation_json["type"] = arg
         elif opt in ("-f", "--sync_force"):
-            sync_json["sync_force"] = True
+            operation_json["sync_force"] = True
         elif opt in ("-d", "--sync_delete"):
-            sync_json["sync_delete_missing"] = True
+            operation_json["sync_delete_missing"] = True
         elif opt in ("-a", "--filter_after_date"):
-            sync_json["sync_filters"]["after_date"] = arg
+            operation_json["sync_filters"]["after_date"] = arg
         elif opt in ("-g", "--filter_grade_level"):
-            sync_json["sync_filters"]["grade_level"] = arg
-        elif opt in ("-l", "--sync_log_path"):
-            sync_json["sync_log_path"] = arg
+            operation_json["sync_filters"]["grade_level"] = arg
+        elif opt in ("-l", "--log_path"):
+            operation_json["log_path"] = arg
             try:
                 # File Log
-                logfile = logging.FileHandler(sync_json["sync_log_path"])
+                logfile = logging.FileHandler(operation_json["log_path"])
                 fileformat = logging.Formatter("%(asctime)s:%(levelname)s:%(message)s")
                 logfile.setLevel(logging.INFO)
                 logfile.setFormatter(fileformat)
@@ -420,15 +866,16 @@ def main(argv):
                 sys.exit(2)
 
     # Sync if there is a config
-    if config and operation == "sync":
-        sync_ls_vc(config, sync_json)
+    if config:
+        if operation == "sync":
+            sync_ls_vc(config, operation_json)
+            if operation_json["sync_delete_missing"]:
+                delete_customer(config)
+        if operation == "export":
+            export_charge_balance(config, operation_json)
     else:
         applogs.info("Parameter config missing.")
         sys.exit(2)
-
-    # Delete if requested
-    if config and sync_json["sync_delete_missing"]:
-        delete_customer(config)
 
 
 if __name__ == '__main__':

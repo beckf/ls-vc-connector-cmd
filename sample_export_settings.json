@@ -1,0 +1,14 @@
+{
+  "type": "Student",
+  "export_shop": "Bookstore",
+  "export_path": "/home/user/store_exports",
+  "export_clear_charges": false,
+  "export_clear_charges_employee_name": "John Smith",
+  "export_clear_payment_type" : "Charge Account",
+  "export_date_begin": "2023-12-01",
+  "export_date_end": "2023-12-31",
+  "export_options_transaction_source": 2,
+  "export_options_school_year": 2023,
+  "export_options_transaction_type": 1,
+  "export_options_catalog_item": 22
+}
