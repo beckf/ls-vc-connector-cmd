@@ -1,5 +1,5 @@
 {
-  "sync_type": "Students",
+  "type": "Students",
   "sync_force": false,
   "sync_delete_missing": false,
   "sync_filters": {
